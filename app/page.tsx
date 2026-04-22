@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
-import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter } from 'lucide-react';
+import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter, Monitor } from 'lucide-react';
 
 export default function Dashboard() {
   const [logs, setLogs] = useState<any[]>([]);
   const [files, setFiles] = useState<any[]>([]);
   const [activeDownloads, setActiveDownloads] = useState<Set<string>>(new Set());
-  const [targetHost, setTargetHost] = useState('DESKTOP-H3N1S9'); // Change this to your agent's hostname
+  const [targetHost, setTargetHost] = useState('');
+  const [availableHosts, setAvailableHosts] = useState<string[]>([]);
   const [foldersOnly, setFoldersOnly] = useState(false);
   const [currentPath, setCurrentPath] = useState('C:\\Users');
   const [menu, setMenu] = useState<{ x: number; y: number; file: any } | null>(null);
@@ -18,6 +19,7 @@ export default function Dashboard() {
   );
 
   const fetchFiles = async () => {
+    if (!targetHost) return;
     const { data } = await supabase
       .from('file_structure')
       .select('*')
@@ -26,8 +28,21 @@ export default function Dashboard() {
     if (data) setFiles(data);
   };
 
+  const fetchHosts = async () => {
+    const { data } = await supabase.from('file_structure').select('computer_name');
+    if (data) {
+      const hosts = Array.from(new Set(data.map(i => i.computer_name)));
+      setAvailableHosts(hosts);
+      if (hosts.length > 0 && !targetHost) {
+        setTargetHost(hosts[0]);
+      }
+    }
+  };
+
   useEffect(() => {
+    fetchHosts();
     fetchFiles();
+    setLogs([]); // Reset logs when switching systems
 
     const closeMenu = () => setMenu(null);
     window.addEventListener('click', closeMenu);
@@ -35,11 +50,11 @@ export default function Dashboard() {
 
     const channel = supabase
       .channel('schema-db-changes')
-      .on('postgres_changes' as const, { event: '*' as const, schema: 'public', table: 'logs' as const }, 
+      .on('postgres_changes' as const, { event: 'INSERT' as const, schema: 'public', table: 'logs' as const, filter: `computer_name=eq.${targetHost}` }, 
         payload => setLogs(prev => [payload.new, ...prev]))
-      .on('postgres_changes' as const, { event: '*' as const, schema: 'public', table: 'file_structure' as const }, 
+      .on('postgres_changes' as const, { event: '*' as const, schema: 'public', table: 'file_structure' as const, filter: `computer_name=eq.${targetHost}` }, 
         () => fetchFiles())
-      .on('postgres_changes' as const, { event: 'UPDATE' as const, schema: 'public', table: 'commands' as const }, 
+      .on('postgres_changes' as const, { event: 'UPDATE' as const, schema: 'public', table: 'commands' as const, filter: `computer_name=eq.${targetHost}` }, 
         payload => {
           const cmd = payload.new as any;
           if (cmd.action_type === 'DOWNLOAD' && (cmd.status === 'completed' || cmd.status === 'failed')) {
@@ -85,7 +100,29 @@ export default function Dashboard() {
   };
 
   return (
-    <main className="min-h-screen bg-black text-zinc-300 p-4 grid grid-cols-12 gap-4 font-mono">
+    <main className="min-h-screen bg-black text-zinc-300 p-4 flex flex-col gap-4 font-mono">
+      {/* Top Bar: System Selection */}
+      <div className="border border-zinc-800 p-3 bg-zinc-900/50 flex items-center justify-between rounded-sm">
+        <div className="flex items-center gap-3">
+          <Monitor size={18} className="text-blue-500" />
+          <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Target System:</span>
+          <select 
+            value={targetHost} 
+            onChange={(e) => setTargetHost(e.target.value)}
+            className="bg-black border border-zinc-700 text-blue-400 text-xs py-1 px-3 rounded focus:outline-none focus:border-blue-500 cursor-pointer"
+          >
+            {!targetHost && <option value="">Searching for agents...</option>}
+            {availableHosts.map(host => (
+              <option key={host} value={host}>{host}</option>
+            ))}
+          </select>
+        </div>
+        <div className="text-[10px] text-zinc-600">
+          AGENTS_DISCOVERED: {availableHosts.length}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-4 flex-1">
       {/* Col 1: Explorer */}
       <div className="col-span-3 border border-zinc-800 p-4 bg-zinc-900/30">
         <div className="flex justify-between items-center mb-4">
@@ -166,12 +203,22 @@ export default function Dashboard() {
       {/* Col 2: Center Controls */}
       <div className="col-span-5 border border-zinc-800 flex flex-col bg-zinc-900/30">
         <div className="p-4 border-b border-zinc-800 text-xs font-bold uppercase tracking-tighter">Command Center</div>
-        <div className="p-6 grid grid-cols-2 gap-4">
+        <div className="p-6 grid grid-cols-3 gap-4">
           <button onClick={() => sendCmd('DELETE')} className="p-4 border border-red-900/50 hover:bg-red-900/20 text-red-500 flex flex-col items-center gap-2">
             <Trash2 size={24}/> DELETE
           </button>
           <button onClick={() => sendCmd('RESTART')} className="p-4 border border-orange-900/50 hover:bg-orange-900/20 text-orange-500 flex flex-col items-center gap-2">
             <RotateCcw size={24}/> RESTART
+          </button>
+          <button 
+            onClick={() => {
+              const path = prompt("Source Path (Full path of file/folder):");
+              const newPath = path ? prompt("Destination Path (Full target path):", path) : null;
+              if (path && newPath) sendCmd('MOVE', { path, newPath });
+            }}
+            className="p-4 border border-blue-900/50 hover:bg-blue-900/20 text-blue-500 flex flex-col items-center gap-2"
+          >
+            <Move size={24}/> MOVE
           </button>
         </div>
       </div>
@@ -229,6 +276,7 @@ export default function Dashboard() {
           </button>
         </div>
       )}
+      </div>
     </main>
   );
 }
