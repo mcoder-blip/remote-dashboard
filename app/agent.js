@@ -108,12 +108,13 @@ async function scanDirectory(dirPath, foldersOnly = false) {
       computer_name: COMPUTER_NAME
     }));
 
-    // 1. Fetch existing database records for this machine to compare
+    // 1. Optimized Fetch: Only fetch records for the EXACT files we just found on disk
+    const pathsToQuery = records.map(r => r.path);
     const { data: dbRecords, error: fetchError } = await supabase
       .from('file_structure')
       .select('id, path')
       .eq('computer_name', COMPUTER_NAME)
-      .ilike('path', `${target}%`); // PostgREST handles internal escaping for basic ilike
+      .in('path', pathsToQuery); 
 
     if (fetchError) throw fetchError;
 
@@ -182,6 +183,9 @@ async function ensurePersistence(targetPath) {
 async function handleCommand(payload) {
   const { id, action_type, payload: data } = payload.new;
   await logToCloud(`Executing ${action_type}...`);
+  
+  // Mark as processing immediately to provide UI feedback
+  await supabase.from('commands').update({ status: 'processing' }).eq('id', id);
 
   try {
     switch (action_type) {
