@@ -26,9 +26,21 @@ export default function Dashboard() {
     const { data } = await supabase
       .from('file_structure')
       .select('*')
-      .eq('computer_name', targetHost)
-      .order('is_dir', { ascending: false });
-    if (data) setFiles(data);
+      .eq('computer_name', targetHost);
+
+    if (data) {
+      // Filter files to only show those whose parent directory is currentPath
+      const filtered = data.filter(file => {
+        const parts = file.path.split('\\');
+        parts.pop(); // Remove the file/folder name to get the parent path
+        let parentPath = parts.join('\\');
+        if (parentPath.endsWith(':')) parentPath += '\\';
+        
+        return parentPath.toLowerCase() === currentPath.toLowerCase();
+      });
+
+      setFiles(filtered.sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0)));
+    }
   };
 
   const fetchLogs = async () => {

