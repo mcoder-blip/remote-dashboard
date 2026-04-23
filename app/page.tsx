@@ -85,7 +85,7 @@ export default function Dashboard() {
       const lastLog = logs[0];
       const lastSeen = new Date(lastLog.created_at).getTime();
       const now = new Date().getTime();
-      setIsOnline((now - lastSeen) < 6 * 60 * 1000); // 6m window allows for 5m heartbeat + jitter
+      setIsOnline((now - lastSeen) < 5 * 60 * 1000); // 5m window is generous for a 1m heartbeat
     } else {
       setIsOnline(false);
     }
