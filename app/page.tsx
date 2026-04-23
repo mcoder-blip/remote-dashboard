@@ -33,14 +33,15 @@ export default function Dashboard() {
     if (data) {
       // Helper to normalize paths for comparison (lowercase and no trailing slash unless it's root)
       const normalize = (p: string) => {
-        let np = p.toLowerCase();
-        if (np.endsWith('\\') && !np.endsWith(':\\')) np = np.slice(0, -1);
+        if (!p) return '';
+        let np = p.toLowerCase().replace(/\//g, '\\'); // Convert forward slashes if any
+        if (np.endsWith('\\') && np.length > 3) np = np.slice(0, -1);
         return np;
       };
 
       // Filter files to only show those whose parent directory is currentPath
       const filtered = data.filter(file => {
-        const parts = file.path.split('\\');
+        const parts = file.path.replace(/\//g, '\\').split('\\');
         parts.pop(); // Remove the file/folder name to get the parent path
         let parentPath = parts.join('\\');
         if (parentPath.endsWith(':')) parentPath += '\\';

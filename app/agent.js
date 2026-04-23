@@ -102,9 +102,9 @@ async function scanDirectory(dirPath, foldersOnly = false) {
       .from('file_structure')
       .select('id, path')
       .eq('computer_name', COMPUTER_NAME)
-      // Only fetch records that are likely to be in this directory or its immediate children
-      // This significantly reduces network traffic and memory usage
-      .like('path', `${target}%`);
+      // Use a more robust pattern matching for Windows paths
+      // We filter by computer_name first to leverage the index
+      .ilike('path', `${target.replace(/\\/g, '\\\\')}%`);
 
     if (fetchError) throw fetchError;
 
