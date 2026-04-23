@@ -116,7 +116,7 @@ async function scanDirectory(dirPath, foldersOnly = false) {
       .from('file_structure')
       .select('id, path')
       .eq('computer_name', COMPUTER_NAME)
-      .ilike('path', `${searchPath.replace(/\\/g, '\\\\')}%`);
+      .ilike('path', `${searchPath}%`); // PostgREST handles internal escaping
 
     if (fetchError) throw fetchError;
 
@@ -379,17 +379,19 @@ async function start() {
   // Phase 2: Worker Mode (Hidden)
   await logToCloud("Agent Online (Background)");
 
-  // 1. Process any commands that arrived while we were offline
-  await processPendingCommands();
-
-  // 2. Subscribe to new incoming commands immediately
-  // Subscribe to commands targeting this specific computer
+  // 1. Subscribe to commands IMMEDIATELY so we don't miss anything during startup
   supabase
     .channel(`agent-${COMPUTER_NAME}`)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commands', filter: `computer_name=eq.${COMPUTER_NAME}` }, handleCommand)
-    .subscribe();
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await logToCloud("Agent Listener Active");
+        // 2. Only after subscribing, process missed commands
+        await processPendingCommands();
+      }
+    });
 
-  // 3. Perform initial scan in the background (no await) 
+  // 3. Perform initial scan in the background (DO NOT await) 
   // This ensures the agent is immediately responsive to new commands from the dashboard
   scanDirectory('C:\\', lastFoldersOnlyPreference).catch(err => 
     logToCloud(`Initial scan failed: ${err.message}`, 'error')
