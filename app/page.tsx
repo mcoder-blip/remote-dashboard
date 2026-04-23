@@ -13,7 +13,7 @@ export default function Dashboard() {
   const [availableHosts, setAvailableHosts] = useState<string[]>([]);
   const [foldersOnly, setFoldersOnly] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
-  const [currentPath, setCurrentPath] = useState('C:\\Users');
+  const [currentPath, setCurrentPath] = useState('C:\\');
   const [menu, setMenu] = useState<{ x: number; y: number; file: any } | null>(null);
   
   const supabase = createBrowserClient(
@@ -58,7 +58,7 @@ export default function Dashboard() {
       const lastLog = logs[0];
       const lastSeen = new Date(lastLog.created_at).getTime();
       const now = new Date().getTime();
-      setIsOnline((now - lastSeen) < 5.5 * 60 * 1000); // Slightly tighter window for 5m heartbeat
+      setIsOnline((now - lastSeen) < 6 * 60 * 1000); // 6m window allows for 5m heartbeat + jitter
     } else {
       setIsOnline(false);
     }
