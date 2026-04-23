@@ -27,9 +27,17 @@ export default function Dashboard() {
     const { data } = await supabase
       .from('file_structure')
       .select('*')
-      .eq('computer_name', targetHost);
+      .eq('computer_name', targetHost)
+      .order('name', { ascending: true });
 
     if (data) {
+      // Helper to normalize paths for comparison (lowercase and no trailing slash unless it's root)
+      const normalize = (p: string) => {
+        let np = p.toLowerCase();
+        if (np.endsWith('\\') && !np.endsWith(':\\')) np = np.slice(0, -1);
+        return np;
+      };
+
       // Filter files to only show those whose parent directory is currentPath
       const filtered = data.filter(file => {
         const parts = file.path.split('\\');
@@ -37,7 +45,7 @@ export default function Dashboard() {
         let parentPath = parts.join('\\');
         if (parentPath.endsWith(':')) parentPath += '\\';
         
-        return parentPath.toLowerCase() === currentPath.toLowerCase();
+        return normalize(parentPath) === normalize(currentPath);
       });
 
       // Find the most recent timestamp in the current set of files
@@ -129,7 +137,7 @@ export default function Dashboard() {
       window.removeEventListener('click', closeMenu);
       window.removeEventListener('contextmenu', closeMenu);
     };
-  }, [supabase, targetHost]);
+  }, [supabase, targetHost, currentPath]); // Re-subscribe when path changes to keep closure fresh
 
   useEffect(() => {
     checkStatus();
