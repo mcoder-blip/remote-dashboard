@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [foldersOnly, setFoldersOnly] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const [currentPath, setCurrentPath] = useState('C:\\');
+  const [lastScanned, setLastScanned] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; file: any } | null>(null);
   
   const supabase = createBrowserClient(
@@ -39,6 +40,13 @@ export default function Dashboard() {
         return parentPath.toLowerCase() === currentPath.toLowerCase();
       });
 
+      // Find the most recent timestamp in the current set of files
+      const latest = filtered.reduce((max, f) => {
+        const time = new Date(f.created_at).getTime();
+        return time > max ? time : max;
+      }, 0);
+
+      setLastScanned(latest > 0 ? new Date(latest).toLocaleTimeString() : 'Never');
       setFiles(filtered.sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0)));
     }
   };
@@ -204,7 +212,10 @@ export default function Dashboard() {
           ))}
         </div>
         <div className="flex justify-between items-center mb-4">
-          <h2 className="flex items-center gap-2 text-blue-500"><HardDrive size={16}/> EXPLORER</h2>
+          <div className="flex flex-col">
+            <h2 className="flex items-center gap-2 text-blue-500 uppercase tracking-tighter"><HardDrive size={16}/> Explorer</h2>
+            <span className="text-[9px] text-zinc-600 font-bold ml-6">LAST_SYNC: {lastScanned}</span>
+          </div>
           <div className="flex gap-2">
             <button 
               onClick={() => {
