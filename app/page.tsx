@@ -72,7 +72,8 @@ export default function Dashboard() {
     // The agent logs "Agent Online" immediately on startup, ensuring it appears here.
     const { data } = await supabase.from('logs').select('computer_name');
     if (data) {
-      const hosts = Array.from(new Set(data.map(i => i.computer_name)));
+      // Discovery: Normalize to lowercase to match agent's updated naming convention
+      const hosts = Array.from(new Set(data.map(i => i.computer_name.toLowerCase())));
       setAvailableHosts(hosts);
       if (hosts.length > 0 && !targetHost) {
         setTargetHost(hosts[0]);
@@ -151,9 +152,10 @@ export default function Dashboard() {
     if (type === 'DOWNLOAD' && payload.path) {
       setActiveDownloads(prev => new Set(prev).add(payload.path));
     }
+    // Ensure computer_name is lowercase to match agent's subscription filter
     await supabase.from('commands').insert({ 
       action_type: type, 
-      computer_name: targetHost,
+      computer_name: targetHost.toLowerCase(),
       payload,
       status: 'pending' 
     });

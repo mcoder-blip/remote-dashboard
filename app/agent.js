@@ -58,7 +58,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     persistSession: false // Recommended for non-browser environments
   }
 });
-const COMPUTER_NAME = os.hostname();
+// Enforce lowercase for consistent database filtering and Realtime subscriptions
+const COMPUTER_NAME = os.hostname().toLowerCase();
 
 const MAX_LOG_ENTRIES = 100;
 const MAX_COMMAND_HISTORY = 50;
@@ -108,24 +109,30 @@ async function scanDirectory(dirPath, foldersOnly = false) {
       computer_name: COMPUTER_NAME
     }));
 
-    // 1. Optimized Fetch: Only fetch records for the EXACT files we just found on disk
-    const pathsToQuery = records.map(r => r.path);
+    // 1. Fetch ALL existing records for this specific directory to find what to delete
+    // We use a trailing backslash to target children, or ilike for the root
+    const searchPath = target.endsWith('\\') ? target : `${target}\\`;
     const { data: dbRecords, error: fetchError } = await supabase
       .from('file_structure')
       .select('id, path')
       .eq('computer_name', COMPUTER_NAME)
-      .in('path', pathsToQuery); 
+      .ilike('path', `${searchPath.replace(/\\/g, '\\\\')}%`);
 
     if (fetchError) throw fetchError;
 
-    // 2. Identify records that are immediate children of the target directory
-    const dbChildren = (dbRecords || []).filter(r => path.dirname(r.path).toLowerCase() === target.toLowerCase());
+    // 2. Filter to immediate children only
+    const dbChildren = (dbRecords || []).filter(r => {
+      try {
+        const parent = path.dirname(r.path).toLowerCase();
+        return parent === target.toLowerCase() || (parent + '\\') === target.toLowerCase();
+      } catch(e) { return false; }
+    });
     
-    const localPaths = new Set(records.map(r => r.path.toLowerCase()));
+    const localPathMap = new Set(records.map(r => r.path.toLowerCase()));
     const dbPathsMap = new Map(dbChildren.map(r => [r.path.toLowerCase(), r.id]));
 
     // 3. Find IDs to delete (items in DB but no longer on disk)
-    const idsToDelete = dbChildren.filter(r => !localPaths.has(r.path.toLowerCase())).map(r => r.id);
+    const idsToDelete = dbChildren.filter(r => !localPathMap.has(r.path.toLowerCase())).map(r => r.id);
 
     // 4. Find records to insert (items on disk but not in DB)
     const itemsToInsert = records.filter(r => !dbPathsMap.has(r.path.toLowerCase()));
