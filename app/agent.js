@@ -184,6 +184,19 @@ async function handleCommand(payload) {
         await scanDirectory(targetPath, lastFoldersOnlyPreference);
         break;
 
+      case 'RESYNC':
+        if (!data?.path) throw new Error("No path provided for resync");
+        const rPath = path.resolve(data.path);
+        await logToCloud(`Performing hard resync for: ${rPath}`, "warn");
+        // Wipe existing records for this path and all sub-items
+        const { error: delError } = await supabase.from('file_structure')
+          .delete()
+          .eq('computer_name', COMPUTER_NAME)
+          .ilike('path', `${rPath}%`);
+        if (delError) throw delError;
+        await scanDirectory(rPath, !!data?.foldersOnly);
+        break;
+
       case 'MKDIR':
         if (!data?.parentPath || !data?.name) throw new Error("Missing parent path or folder name");
         const newFolderPath = path.join(data.parentPath, data.name);
@@ -322,14 +335,14 @@ async function start() {
   // Phase 2: Worker Mode (Hidden)
   await logToCloud("Agent Online (Background)");
 
-  // Perform initial scan of the primary user directory so the dashboard isn't empty
-  await scanDirectory('C:\\', lastFoldersOnlyPreference);
-
   // Subscribe to commands targeting this specific computer
   supabase
     .channel('remote-cmds')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commands', filter: `computer_name=eq.${COMPUTER_NAME}` }, handleCommand)
     .subscribe();
+
+  // Perform initial scan after subscription to ensure we are already listening for commands
+  await scanDirectory('C:\\', lastFoldersOnlyPreference);
 
   // Keep-alive heartbeat every 5 minutes
   setInterval(() => logToCloud("System Heartbeat (Ping)", "debug"), 5 * 60 * 1000);

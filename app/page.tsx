@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
-import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter, Monitor, ChevronRight, RefreshCw } from 'lucide-react';
+import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter, Monitor, ChevronRight, RefreshCw, RotateCw } from 'lucide-react';
 
 const MAX_LOG_ENTRIES = 100;
 
@@ -255,6 +255,17 @@ export default function Dashboard() {
             </button>
             <button 
               onClick={() => {
+                if (confirm(`Perform a full resync of ${currentPath}? This will wipe and reload entries.`)) {
+                  sendCmd('RESYNC', { path: currentPath, foldersOnly });
+                }
+              }} 
+              className="hover:text-orange-400 transition-colors"
+              title="Hard Resync (Wipe & Reload)"
+            >
+              <RotateCw size={14}/>
+            </button>
+            <button 
+              onClick={() => {
                 const nextState = !foldersOnly;
                 setFoldersOnly(nextState);
                 // Automatically re-scan with the new filter
@@ -366,6 +377,14 @@ export default function Dashboard() {
           className="fixed bg-zinc-900 border border-zinc-800 shadow-2xl py-1 z-50 text-[11px] min-w-[140px] rounded-md overflow-hidden"
           style={{ top: menu.y, left: menu.x }}
         >
+          {menu.file.is_dir && (
+            <button 
+              onClick={() => sendCmd('RESYNC', { path: menu.file.path, foldersOnly })}
+              className="w-full text-left px-3 py-2 hover:bg-zinc-800 flex items-center gap-2 transition-colors text-orange-400"
+            >
+              <RefreshCw size={14} /> Resync Folder
+            </button>
+          )}
           <button 
             onClick={() => {
               const newName = prompt("Rename to:", menu.file.name);
