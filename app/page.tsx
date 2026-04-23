@@ -27,26 +27,24 @@ export default function Dashboard() {
     const { data } = await supabase
       .from('file_structure')
       .select('*')
-      .eq('computer_name', targetHost)
-      .order('name', { ascending: true });
+      .eq('computer_name', targetHost);
 
     if (data) {
-      // Helper to normalize paths for comparison (lowercase and no trailing slash unless it's root)
+      // Robust path normalization for Windows/Posix mixed environments
       const normalize = (p: string) => {
         if (!p) return '';
-        let np = p.toLowerCase().replace(/\//g, '\\'); // Convert forward slashes if any
-        if (np.endsWith('\\') && np.length > 3) np = np.slice(0, -1);
-        return np;
+        return p.replace(/[\\/]+$/, '').toLowerCase().replace(/\//g, '\\');
       };
 
-      // Filter files to only show those whose parent directory is currentPath
+      const currentNorm = normalize(currentPath);
+
       const filtered = data.filter(file => {
-        const parts = file.path.replace(/\//g, '\\').split('\\');
-        parts.pop(); // Remove the file/folder name to get the parent path
-        let parentPath = parts.join('\\');
-        if (parentPath.endsWith(':')) parentPath += '\\';
-        
-        return normalize(parentPath) === normalize(currentPath);
+        const fileParts = file.path.replace(/\//g, '\\').split('\\');
+        fileParts.pop();
+        let fileParent = fileParts.join('\\');
+        // Handle drive root edge case (e.g. C: needs to be C:\ for normalization)
+        if (fileParent.endsWith(':')) fileParent += '\\';
+        return normalize(fileParent) === currentNorm;
       });
 
       // Find the most recent timestamp in the current set of files
@@ -56,7 +54,7 @@ export default function Dashboard() {
       }, 0);
 
       setLastScanned(latest > 0 ? new Date(latest).toLocaleTimeString() : 'Never');
-      setFiles(filtered.sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0)));
+      setFiles(filtered.sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0) || a.name.localeCompare(b.name)));
     }
   };
 

