@@ -121,12 +121,14 @@ export default function Dashboard() {
       .on('postgres_changes' as const, { event: 'UPDATE' as const, schema: 'public', table: 'commands' as const, filter: `computer_name=eq.${targetHost}` }, 
         payload => {
           const cmd = payload.new as any;
-          if (cmd.action_type === 'DOWNLOAD' && (cmd.status !== 'pending' && cmd.status !== 'processing')) {
-            setActiveDownloads(prev => {
-              const next = new Set(prev);
-              next.delete(cmd.payload?.path);
-              return next;
-            });
+          if (cmd.action_type === 'DOWNLOAD') {
+            if (cmd.status === 'completed' || cmd.status === 'failed') {
+              setActiveDownloads(prev => {
+                const next = new Set(prev);
+                next.delete(cmd.payload?.path);
+                return next;
+              });
+            }
           }
         })
       .subscribe();

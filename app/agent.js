@@ -382,12 +382,18 @@ async function start() {
   // 1. Subscribe to commands IMMEDIATELY so we don't miss anything during startup
   supabase
     .channel(`agent-${COMPUTER_NAME}`)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commands', filter: `computer_name=eq.${COMPUTER_NAME}` }, handleCommand)
-    .subscribe(async (status) => {
+    .on('postgres_changes', { 
+      event: 'INSERT', 
+      schema: 'public', 
+      table: 'commands', 
+      filter: `computer_name=eq.${COMPUTER_NAME}` 
+    }, handleCommand)
+    .subscribe(async (status, err) => {
       if (status === 'SUBSCRIBED') {
-        await logToCloud("Agent Listener Active");
-        // 2. Only after subscribing, process missed commands
+        await logToCloud("Agent Listener Active (Listening for Commands)");
         await processPendingCommands();
+      } else if (status === 'CHANNEL_ERROR') {
+        await logToCloud(`Realtime Error: ${err?.message || 'Connection failed'}`, 'error');
       }
     });
 
