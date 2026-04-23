@@ -41,8 +41,9 @@ export default function Dashboard() {
   };
 
   const fetchHosts = async () => {
-    // Optimized query to only fetch the column we need
-    const { data } = await supabase.from('file_structure').select('computer_name');
+    // Discovery: Query the logs table instead of file_structure.
+    // The agent logs "Agent Online" immediately on startup, ensuring it appears here.
+    const { data } = await supabase.from('logs').select('computer_name');
     if (data) {
       const hosts = Array.from(new Set(data.map(i => i.computer_name)));
       setAvailableHosts(hosts);
