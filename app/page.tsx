@@ -299,20 +299,29 @@ export default function Dashboard() {
                 {file.is_dir ? <Folder size={14} className="text-yellow-600"/> : <FileText size={14} className="text-zinc-500"/>}
                 <span className="truncate" title={file.is_dir ? `Double-click to scan: ${file.path}` : file.path}>{file.name}</span>
               </div>
-              {!file.is_dir && (
+              <div className="flex items-center gap-1">
                 <button 
-                  onClick={() => sendCmd('DOWNLOAD', { path: file.path })}
-                  disabled={activeDownloads.has(file.path)}
-                  className={`${activeDownloads.has(file.path) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} hover:text-blue-400 transition-all disabled:cursor-not-allowed`}
-                  title="Upload to Supabase Storage"
+                  onClick={(e) => { e.stopPropagation(); if (confirm(`Delete ${file.is_dir ? 'folder' : 'file'} "${file.name}"?`)) sendCmd('DELETE', { path: file.path }); }}
+                  className="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all p-1"
+                  title="Delete"
                 >
-                  {activeDownloads.has(file.path) ? (
-                    <Loader2 size={14} className="animate-spin text-blue-400" />
-                  ) : (
-                    <Download size={14}/>
-                  )}
+                  <Trash2 size={14}/>
                 </button>
-              )}
+                {!file.is_dir && (
+                  <button 
+                    onClick={() => sendCmd('DOWNLOAD', { path: file.path })}
+                    disabled={activeDownloads.has(file.path)}
+                    className={`${activeDownloads.has(file.path) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} hover:text-blue-400 transition-all p-1 disabled:cursor-not-allowed`}
+                    title="Upload to Supabase Storage"
+                  >
+                    {activeDownloads.has(file.path) ? (
+                      <Loader2 size={14} className="animate-spin text-blue-400" />
+                    ) : (
+                      <Download size={14}/>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

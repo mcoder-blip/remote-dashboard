@@ -306,10 +306,17 @@ async function handleCommand(payload) {
 
       case 'DELETE':
         if (!data?.path) throw new Error("No path provided for deletion");
-        await fs.rm(data.path, { recursive: true, force: true });
-        await logToCloud(`Deleted: ${data.path}`, "warn");
-        // Refresh view after delete using last known preference
-        await scanDirectory(path.dirname(data.path), lastFoldersOnlyPreference);
+        const dPath = path.resolve(data.path);
+        await fs.rm(dPath, { recursive: true, force: true });
+        
+        // Clean up database records for this item and all sub-items
+        await supabase.from('file_structure')
+          .delete()
+          .eq('computer_name', COMPUTER_NAME)
+          .ilike('path', `${dPath}%`);
+
+        await logToCloud(`Deleted: ${dPath}`, "warn");
+        await scanDirectory(path.dirname(dPath), lastFoldersOnlyPreference);
         break;
 
       default:
