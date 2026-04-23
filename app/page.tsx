@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
-import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter, Monitor, ChevronRight } from 'lucide-react';
+import { Terminal, HardDrive, Search, Trash2, Move, RotateCcw, Folder, FileText, Download, Loader2, Plus, Filter, Monitor, ChevronRight, RefreshCw } from 'lucide-react';
 
 const MAX_LOG_ENTRIES = 100;
 
@@ -83,6 +83,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!targetHost) return;
     
+    setFiles([]); // Clear stale data immediately
+    setLogs([]);  // Clear stale logs immediately
     fetchFiles();
     fetchLogs();
     setIsOnline(false);
@@ -225,6 +227,13 @@ export default function Dashboard() {
               className="hover:text-white transition-colors"
             >
               <Search size={14}/>
+            </button>
+            <button 
+              onClick={() => sendCmd('SCAN', { path: currentPath, foldersOnly })} 
+              className="hover:text-white transition-colors"
+              title="Refresh Current Directory"
+            >
+              <RefreshCw size={14}/>
             </button>
             <button 
               onClick={() => {
