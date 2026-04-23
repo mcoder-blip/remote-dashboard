@@ -380,20 +380,21 @@ async function start() {
   await logToCloud("Agent Online (Background)");
 
   // 1. Subscribe to commands IMMEDIATELY so we don't miss anything during startup
+  // We remove the server-side filter and handle the check in the callback for maximum reliability
   supabase
-    .channel(`agent-${COMPUTER_NAME}`)
-    .on('postgres_changes', { 
-      event: 'INSERT', 
-      schema: 'public', 
-      table: 'commands', 
-      filter: `computer_name=eq.${COMPUTER_NAME}` 
-    }, handleCommand)
-    .subscribe(async (status, err) => {
+    .channel('winx-commands')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commands' }, (payload) => {
+      // Manually verify that the command is for THIS computer
+      if (payload.new.computer_name && payload.new.computer_name.toLowerCase() === COMPUTER_NAME) {
+        handleCommand(payload);
+      }
+    })
+    .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        await logToCloud("Agent Listener Active (Listening for Commands)");
+        await logToCloud("Agent Listener Active (JS Filter Mode)");
         await processPendingCommands();
       } else if (status === 'CHANNEL_ERROR') {
-        await logToCloud(`Realtime Error: ${err?.message || 'Connection failed'}`, 'error');
+        await logToCloud("Realtime Subscription Failed - Check Network/Keys", 'error');
       }
     });
 
